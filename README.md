@@ -9,7 +9,7 @@ This study proposes StarPose, a single-branch, upsampling-free network structure
 Furthermore, the overall architecture is restructured using the advanced lightweight design insight: the star operation, which can handle high-dimensional features while computing in a low dimensional space. 
 The proposed method achieves two times faster inference speed than Lite-HRNet with almost the same model complexity on the MS COCO and MPII benchmarks, while maintaining superior accuracy, thereby setting a new state-of-the-art performance. 
 
-<img src="/resources/starpose.png"/>
+<img src="/resources/starpose.jpg"/>
 
 ## Results and models
 
