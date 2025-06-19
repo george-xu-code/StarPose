@@ -1,13 +1,20 @@
 # StarPose
-Official code repository for the paper: StarPose: Sparkling Lightweight Human Pose Estimation with Star Operation
-
-
+Rethinking Lightweight and Efficient Human Pose Estimation with Star Operation Reconstruction 
+## News
+2025/06/01 The paper has been accepted as a short paper at KSEM 2025
 ## Abstract
 
-Lightweight human pose estimation has long been a research hotspot and challenge in this field. Most existing methods primarily focus on introducing high-resolution design patterns in HRNet, followed by lightweight modifications. However, the presence of multi-resolution branches introduces a throughput bottleneck in this paradigm. 
-This study proposes StarPose, a single-branch, upsampling-free network structure. The network is designed with HRPVT-S as the macro architecture, and all micro block designs are optimized from a lightweight perspective. 
-Furthermore, the overall architecture is restructured using the advanced lightweight design insight: the star operation, which can handle high-dimensional features while computing in a low dimensional space. 
-The proposed method achieves two times faster inference speed than Lite-HRNet with almost the same model complexity on the MS COCO and MPII benchmarks, while maintaining superior accuracy, thereby setting a new state-of-the-art performance. 
+Lightweight human pose estimation has long been a research hotspot 
+and challenge in the field. Most existing methods primarily rely on introducing 
+the high-resolution design pattern from HRNet and subsequently performing 
+lightweight modifications. However, the multi-resolution branches in this paradigm result in a bottleneck in terms of throughput. To address this issue, this 
+study proposes StarPose, a single-branch, upsampling-free macro architecture 
+based on HRPVT. By optimizing all micro block designs from a lightweight perspective and reconstructing the network using the advanced star operation design 
+insight, the proposed method can handle high-dimensional features while computing in a low-dimensional space, akin to the mechanism of kernel functions, 
+thereby achieving more effective semantic feature representation. The proposed 
+method achieves 2× faster inference speed than Lite-HRNet under nearly the 
+same model complexity on the MS COCO and MPII benchmarks, while maintaining superior accuracy. This significant improvement unlocks greater potential 
+for deployment on resource-constrained edge devices. 
 
 <img src="/resources/starpose.jpg"/>
 
