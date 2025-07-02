@@ -1,11 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import math
 import warnings
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
 from mmcv.cnn import Conv2d, build_activation_layer, build_norm_layer
 from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.cnn.bricks.transformer import MultiheadAttention
@@ -18,6 +18,12 @@ from ...utils import get_root_logger
 from ..utils import PatchEmbed, nchw_to_nlc, nlc_to_nchw, pvt_convert
 from .utils import get_state_dict
 from timm.models.layers import DropPath
+
+
+from mmengine.utils import digit_version
+from torch import Tensor
+
+from mmpose.utils.typing import OptMultiConfig
 
 
 class ConvBNReLU(nn.Module):
@@ -74,29 +80,17 @@ class PRMv1(BaseModule):
 
     def forward(self, x):
         B, C, W, H = x.shape
-        y = self.convs[0](x).unsqueeze(dim=-1)
+        y = self.convs[0](x)
         for i in range(1, len(self.dilations)):
-            _y = self.convs[i](x).unsqueeze(dim=-1)
-            y = torch.cat((y, _y), dim=-1)
-
-        B, C, W, H, N = y.shape
-
-        if self.op == 'sum':
-            y = y.sum(dim=-1).contiguous()
-            # y = y.sum(dim=-1).flatten(2).permute(0, 2, 1).contiguous()
-        elif self.op == 'cat':
-            y = y.permute(0, 4, 1, 2, 3).flatten(3).reshape(B, N * C, W, H).contiguous()
-            # y = y.permute(0, 4, 1, 2, 3).flatten(3).reshape(B, N * C, W * H).permute(0, 2, 1).contiguous()
-
-        else:
-            raise NotImplementedError('no such operation: {} for multi-levels!'.format(self.op))
+            _y = self.convs[i](x)
+            y = torch.cat((y, _y), dim=1)
 
         return y
 
 
 class SAM(BaseModule):
     def __init__(self, kernel_size=3, downsample_ratio=1, dilations=[1, 2, 3], in_chans=32, embed_dim=32,
-                 op='sum', init_cfg=dict(type='Kaiming', layer='Conv2d')):
+                 op='sum', init_cfg=dict(type='Kaiming', layer='Conv2d'), norm_cfg=dict(type='LN')):
 
         super().__init__(init_cfg)
 
@@ -109,13 +103,14 @@ class SAM(BaseModule):
 
         self.convs = nn.ModuleList()
 
+        self.norm = build_norm_layer(norm_cfg, in_chans)[1]
         self.res_proj= nn.Sequential(
             nn.Linear(in_chans,embed_dim),
             nn.SiLU()
         )
         self.in_proj =  nn.Linear(in_chans,embed_dim)
 
-        self.out_proj = nn.Sequential(
+        self.out_proj =nn.Sequential(
             nn.Conv2d(
                 in_channels=embed_dim,
                 out_channels=in_chans,
@@ -123,9 +118,7 @@ class SAM(BaseModule):
                 stride=1,
                 padding=0,
             ),
-            nn.BatchNorm2d(in_chans),
-            nn.ReLU(inplace=True)
-        )
+            nn.BatchNorm2d(in_chans))
 
         for i, dilation in enumerate(self.dilations):
             dilated_kernel_size = (self.kernel_size - 1) * dilation + 1
@@ -136,32 +129,20 @@ class SAM(BaseModule):
                   nn.GELU(), ]))
 
     def forward(self, x,hw_shape):
-        B, C, W, H = x.shape
-        shortcut =x
 
-        x = nchw_to_nlc(x)
-        x=self.in_proj(x)*self.res_proj(x)
+        shortcut =x
+        x = self.norm(x)
+
+        x = self.in_proj(x)*self.res_proj(x)
         x = nlc_to_nchw(x,hw_shape)
 
-        y = self.convs[0](x).unsqueeze(dim=-1)
+        y = self.convs[0](x)
         for i in range(1, len(self.dilations)):
-            _y = self.convs[i](x).unsqueeze(dim=-1)
-            y = torch.cat((y, _y), dim=-1)
-        B, C, W, H, N = y.shape
-        if self.op == 'sum':
-            y = y.sum(dim=-1).contiguous()
-            # y = y.sum(dim=-1).flatten(2).permute(0, 2, 1).contiguous()
-        elif self.op == 'mul':
-            y = torch.prod(y,dim=-1).contiguous()
-        elif self.op == 'cat':
-            y = y.permute(0, 4, 1, 2, 3).flatten(3).reshape(B, N * C, W, H).contiguous()
-            # y = y.permute(0, 4, 1, 2, 3).flatten(3).reshape(B, N * C, W * H).permute(0, 2, 1).contiguous()
-
-        else:
-            raise NotImplementedError('no such operation: {} for multi-levels!'.format(self.op))
+            _y = self.convs[i](x)
+            y += _y
 
         y = self.out_proj(y)
-        y = y + shortcut
+        y = y + nlc_to_nchw(shortcut, hw_shape)
 
         return y
 
@@ -365,35 +346,6 @@ class SpatialReductionAttention(MultiheadAttention):
         return identity + self.dropout_layer(self.proj_drop(out))
 
 
-class RoPE(torch.nn.Module):
-    r"""Rotary Positional Embedding.
-    """
-    def __init__(self, shape, base=10000):
-        super(RoPE, self).__init__()
-
-        channel_dims, feature_dim = shape[:-1], shape[-1]
-        k_max = feature_dim // (2 * len(channel_dims))
-
-        assert feature_dim % k_max == 0
-
-        # angles
-        theta_ks = 1 / (base ** (torch.arange(k_max) / k_max))
-        angles = torch.cat([t.unsqueeze(-1) * theta_ks for t in torch.meshgrid([torch.arange(d) for d in channel_dims], indexing='ij')], dim=-1)
-
-        # rotation
-        rotations_re = torch.cos(angles).unsqueeze(dim=-1)
-        rotations_im = torch.sin(angles).unsqueeze(dim=-1)
-        rotations = torch.cat([rotations_re, rotations_im], dim=-1)
-        self.register_buffer('rotations', rotations)
-
-    def forward(self, x):
-        if x.dtype != torch.float32:
-            x = x.to(torch.float32)
-        x = torch.view_as_complex(x.reshape(*x.shape[:-1], -1, 2))
-        pe_x = torch.view_as_complex(self.rotations) * x
-        return torch.view_as_real(pe_x).flatten(-2)
-
-
 class LinearAttention(nn.Module):
     r""" Linear Attention with LePE.
 
@@ -403,18 +355,25 @@ class LinearAttention(nn.Module):
         qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
     """
 
-    def __init__(self, dim, input_resolution, num_heads, qkv_bias=True, **kwargs):
+    def __init__(self, dim, num_heads, qkv_bias=True,dr_ratio=1,idx=None, **kwargs):
 
         super().__init__()
         self.dim = dim
-        self.input_resolution = input_resolution
         self.num_heads = num_heads
-        self.qk = nn.Linear(dim, dim * 2, bias=qkv_bias)
+
+        self.dr_ratio = dr_ratio
+        if (dim // dr_ratio) % num_heads != 0:
+            raise ValueError(f"dim // dr_ratio ({dim // dr_ratio}) must be divisible by num_heads ({num_heads})")
+
+        self.q = nn.Linear(dim, dim//dr_ratio, bias=qkv_bias)
+        self.k = nn.Linear(dim, dim//dr_ratio, bias=qkv_bias)
+
+        self.idx=idx
+
         self.elu = nn.ELU()
         self.lepe = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
-        # self.rope = RoPE(shape=(input_resolution[0], input_resolution[1], dim))
 
-    def forward(self, x,H, W):
+    def forward(self, x, hw_shape):#H, W
         """
         Args:
             x: input features with shape of (B, N, C)
@@ -422,19 +381,19 @@ class LinearAttention(nn.Module):
         b, n, c = x.shape
 
         num_heads = self.num_heads
-        head_dim = c // num_heads
 
-        qk = self.qk(x).reshape(b, n, 2, c).permute(2, 0, 1, 3)
-        q, k, v = qk[0], qk[1], x
+        q=self.q(x)
+        k=self.k(x)
+
+        head_dim = c // num_heads
+        shortcut=v=x
         # q, k, v: b, n, c
 
         q = self.elu(q) + 1.0
         k = self.elu(k) + 1.0
 
-        # q_rope = self.rope(q.reshape(b, H, W, c)).reshape(b, n, num_heads, head_dim).permute(0, 2, 1, 3)
-        # k_rope = self.rope(k.reshape(b, H, W, c)).reshape(b, n, num_heads, head_dim).permute(0, 2, 1, 3)
-        q = q.reshape(b, n, num_heads, head_dim).permute(0, 2, 1, 3)
-        k = k.reshape(b, n, num_heads, head_dim).permute(0, 2, 1, 3)
+        q = q.reshape(b, n, num_heads, -1).permute(0, 2, 1, 3)
+        k = k.reshape(b, n, num_heads, -1).permute(0, 2, 1, 3)
         v = v.reshape(b, n, num_heads, head_dim).permute(0, 2, 1, 3)
 
         z = 1 / (q @ k.mean(dim=-2, keepdim=True).transpose(-2, -1) + 1e-6)
@@ -442,10 +401,12 @@ class LinearAttention(nn.Module):
         x = q @ kv * z
 
         x = x.transpose(1, 2).reshape(b, n, c)
-        v = v.transpose(1, 2).reshape(b, H, W, c).permute(0, 3, 1, 2)
-        x = x + self.lepe(v).permute(0, 2, 3, 1).reshape(b, n, c)
 
-        return x
+        shortcut = nlc_to_nchw(shortcut, hw_shape)
+        shortcut = self.lepe(shortcut)
+        shortcut = nchw_to_nlc(shortcut)
+
+        return x + shortcut
 
 
 class EMLLABlock(nn.Module):
@@ -463,51 +424,59 @@ class EMLLABlock(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, input_resolution, num_heads, qkv_bias=True, drop_path=0.,
-                 norm_layer=nn.LayerNorm, sr_ratio=1, **kwargs):
+    def __init__(self, dim, num_heads, qkv_bias=True, drop_path=0.,
+                 norm_layer=nn.LayerNorm, sr_ratio=1, dr_ratio=1, idx=None, layer_idx=None, num_layer=None,
+                 structure=None, **kwargs):
         super().__init__()
         self.dim = dim
-        self.input_resolution = input_resolution
         self.num_heads = num_heads
-
-        self.norm1 = norm_layer(dim)
+        if structure not in ['TE', 'CP']:
+            raise ValueError(f"Invalid structure: {structure}. Must be 'TE' or 'CP'.")
+        self.act = nn.SiLU()
         self.in_proj = nn.Linear(dim, dim)
         self.act_proj = nn.Linear(dim, dim)
-        self.dwc = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
-        self.act = nn.SiLU()
-        self.attn = LinearAttention(dim=dim, input_resolution=input_resolution, num_heads=num_heads, qkv_bias=qkv_bias)
-        # self.attn = SpatialReductionAttention(
-        #     embed_dims=dim,
-        #     num_heads=num_heads,
-        #     qkv_bias=qkv_bias,
-        #     sr_ratio=sr_ratio)
-        self.out_proj = nn.Linear(dim, dim)
+        self.idx = idx
+        self.layer_idx = layer_idx
+        self.num_layer = num_layer
+
+        self.is_middle_layer = (structure == 'TE' and layer_idx != num_layer - 1) or \
+                          (structure == 'CP' and layer_idx != 0 and layer_idx != num_layer - 1)
+        if self.is_middle_layer:
+            self.dwc = nn.Sequential(
+                nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3),
+                nn.Conv2d(dim, dim, 5, padding=2, groups=dim),
+                nn.GELU()
+            )
+            self.out_proj = nn.Sequential(nn.Conv2d(dim, dim, 1), nn.BatchNorm2d(dim))
+        else:
+            self.dwc = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
+            self.attn = LinearAttention(dim=dim, num_heads=num_heads, qkv_bias=qkv_bias,
+                                        dr_ratio=dr_ratio, idx=idx)
+            self.out_proj = nn.Linear(dim, dim)
+
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x,  ):# When using SRA, please add these formal parameters: hw_shape, identity
-        H, W = self.input_resolution
-        B, L, C = x.shape
 
-        assert L == H * W, "input feature has wrong size"
+    def forward(self, x, hw_shape, identity=None):
+        
+        if self.is_middle_layer:
+            act_res = self.act(self.act_proj(x))
+            x = self.in_proj(x)
+            x = nlc_to_nchw(x * act_res, hw_shape)
+            x = self.dwc(x)
+            x = self.out_proj(x)
+            x = nchw_to_nlc(x)
+            # 末层/首层分支
+        else:
+            act_res = self.act(self.act_proj(x))
+            x = self.in_proj(x)
+            x = nlc_to_nchw(x, hw_shape)
+            x = self.act(self.dwc(x))
+            x = nchw_to_nlc(x)
+            x = self.attn(x, hw_shape)
+            x = self.out_proj(x * act_res)
 
-        shortcut = x
-
-        x = self.norm1(x)
-
-        act_res = self.act(self.act_proj(x))
-        x = self.in_proj(x).view(B, H, W, C)
-
-        x = self.act(self.dwc(x.permute(0, 3, 1, 2))).permute(0, 2, 3, 1).view(B, L, C)
-
-        # Linear Attention
-        x = self.attn(x,H, W)
-        # SRA
-        # x = self.attn(x, hw_shape, identity)
-
-        x = self.out_proj(x * act_res)
-        x = shortcut + self.drop_path(x)
-
-        return x
+        return identity + self.drop_path(x)
 
 
 class PVTEncoderLayer(BaseModule):
@@ -537,7 +506,6 @@ class PVTEncoderLayer(BaseModule):
     """
 
     def __init__(self,
-                 input_resolution,
                  embed_dims,
                  num_heads,
                  feedforward_channels,
@@ -550,13 +518,14 @@ class PVTEncoderLayer(BaseModule):
                  sr_ratio=1,
                  use_conv_ffn=False,
                  init_cfg=None,
-                 idx=None):
+                 dr_ratio=1,
+                 idx=None,
+                 layer_idx=None,
+                 num_layer=None,
+                 structure=None):
         super(PVTEncoderLayer, self).__init__(init_cfg=init_cfg)
 
         # The ret[0] of build_norm_layer is norm name.
-        # 自己改的
-        self.idx=idx
-
         self.norm1 = build_norm_layer(norm_cfg, embed_dims)[1]
 
         # self.attn = SpatialReductionAttention(
@@ -569,7 +538,15 @@ class PVTEncoderLayer(BaseModule):
         #     norm_cfg=norm_cfg,
         #     sr_ratio=sr_ratio)
 
-        self.attn = EMLLABlock(dim=embed_dims,input_resolution=input_resolution, num_heads=num_heads,drop_path=drop_path_rate,sr_ratio=sr_ratio)
+        self.attn = EMLLABlock(dim=embed_dims,
+                               num_heads=num_heads,
+                               drop_path=drop_path_rate,
+                               sr_ratio=sr_ratio,
+                               dr_ratio=dr_ratio,
+                               idx=idx,
+                               layer_idx=layer_idx,
+                               num_layer=num_layer,
+                               structure=structure)
 
         # The ret[0] of build_norm_layer is norm name.
         self.norm2 = build_norm_layer(norm_cfg, embed_dims)[1]
@@ -583,7 +560,7 @@ class PVTEncoderLayer(BaseModule):
             act_cfg=act_cfg)
 
     def forward(self, x, hw_shape):
-        x = self.attn(self.norm1(x))
+        x = self.attn(self.norm1(x), hw_shape, identity=x)
         x = self.ffn(self.norm2(x), hw_shape, identity=x)
 
         return x
@@ -717,7 +694,6 @@ class PyramidVisionTransformer(BaseModule):
 
     def __init__(self,
                  pretrain_img_size=224,
-                 stem_size=(64, 48),
                  in_channels=3,
                  embed_dims=64,
                  num_stages=4,
@@ -730,6 +706,7 @@ class PyramidVisionTransformer(BaseModule):
                  out_indices=(0, 1, 2, 3),
                  mlp_ratios=[8, 8, 4, 4],
                  prm_ratio=[1,2,2,2],
+                 dr_ratio=[1,2,2,4],
                  qkv_bias=True,
                  drop_rate=0.,
                  attn_drop_rate=0.,
@@ -737,6 +714,7 @@ class PyramidVisionTransformer(BaseModule):
                  use_abs_pos_embed=True,
                  norm_after_stage=False,
                  use_conv_ffn=False,
+                 structure=None,
                  act_cfg=dict(type='GELU'),
                  norm_cfg=dict(type='LN', eps=1e-6),
                  convert_weights=True,
@@ -746,8 +724,8 @@ class PyramidVisionTransformer(BaseModule):
                      dict(type='Kaiming', layer=['Conv2d'])
                  ]):
         super().__init__(init_cfg=init_cfg)
-        # 自己改的
-        if embed_dims == 16:
+
+        if embed_dims <= 16:
             self.stem = StemNet(in_channels=in_channels, embed_dim=embed_dims)
         else:
             self.prmv1 = PRMv1()
@@ -785,7 +763,6 @@ class PyramidVisionTransformer(BaseModule):
         cur = 0
         self.layers = ModuleList()
         for i, num_layer in enumerate(num_layers):
-            layer_resolution=(stem_size[0]//(2**i),stem_size[1]//(2**i))
             embed_dims_i = embed_dims * num_heads[i]
             patch_embed = PatchEmbed(
                 in_channels=in_channels,
@@ -807,7 +784,6 @@ class PyramidVisionTransformer(BaseModule):
                 layers.append(pos_embed)
             layers.extend([
                 PVTEncoderLayer(
-                    input_resolution=layer_resolution,
                     embed_dims=embed_dims_i,
                     num_heads=num_heads[i],
                     feedforward_channels=mlp_ratios[i] * embed_dims_i,
@@ -819,7 +795,11 @@ class PyramidVisionTransformer(BaseModule):
                     norm_cfg=norm_cfg,
                     sr_ratio=sr_ratios[i],
                     use_conv_ffn=use_conv_ffn,
-                    idx=i) for idx in range(num_layer)
+                    dr_ratio=dr_ratio[i],
+                    idx=i,
+                    layer_idx=idx,
+                    num_layer=num_layer,
+                    structure=structure) for idx in range(num_layer)
             ])
             in_channels = embed_dims_i
             # The ret[0] of build_norm_layer is norm name.
@@ -828,7 +808,8 @@ class PyramidVisionTransformer(BaseModule):
             else:
                 norm = nn.Identity()
 
-            sam = SAM(in_chans=embed_dims_i, embed_dim=embed_dims_i * prm_ratio[i])
+            sam = SAM(in_chans=embed_dims_i, embed_dim=embed_dims_i* prm_ratio[i],norm_cfg=norm_cfg)
+
             self.layers.append(ModuleList([patch_embed, layers, norm, sam]))
 
             cur += num_layer
@@ -869,9 +850,9 @@ class PyramidVisionTransformer(BaseModule):
                 x = block(x, hw_shape)
 
             x = layer[2](x)
-            x = nlc_to_nchw(x, hw_shape)
 
             x = layer[3](x,hw_shape)
+
             if i in self.out_indices:
                 outs.append(x)
 
@@ -902,6 +883,6 @@ class StarPose(PyramidVisionTransformer):
             paddings=[1, 1, 1, 1],
             strides=[2, 2, 2, 2],
             use_abs_pos_embed=False,
-            norm_after_stage=True,
+            norm_after_stage=False,
             use_conv_ffn=True,
             **kwargs)

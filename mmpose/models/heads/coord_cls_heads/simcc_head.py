@@ -16,6 +16,7 @@ from mmpose.utils.tensor_utils import to_numpy
 from mmpose.utils.typing import (ConfigType, InstanceList, OptConfigType,
                                  OptSampleList)
 from ..base_head import BaseHead
+from ...utils.rtmcc_block import ScaleNorm
 
 OptIntSeq = Optional[Sequence[int]]
 
@@ -76,8 +77,7 @@ class SimCCHead(BaseHead):
         out_channels: int,
         input_size: Tuple[int, int],
         in_featuremap_size: Tuple[int, int],
-        x_simcc_split_ratio: float = 2.0,
-        y_simcc_split_ratio: float = 2.0,
+        simcc_split_ratio: float = 2.0,
         deconv_type: str = 'heatmap',
         deconv_out_channels: OptIntSeq = (256, 256, 256),
         deconv_kernel_sizes: OptIntSeq = (4, 4, 4),
@@ -105,8 +105,7 @@ class SimCCHead(BaseHead):
         self.out_channels = out_channels
         self.input_size = input_size
         self.in_featuremap_size = in_featuremap_size
-        self.x_simcc_split_ratio = x_simcc_split_ratio
-        self.y_simcc_split_ratio = y_simcc_split_ratio
+        self.simcc_split_ratio = simcc_split_ratio
         self.loss_module = MODELS.build(loss)
         if decoder is not None:
             self.decoder = KEYPOINT_CODECS.build(decoder)
@@ -154,33 +153,19 @@ class SimCCHead(BaseHead):
         # Define SimCC layers
         flatten_dims = self.heatmap_size[0] * self.heatmap_size[1]
 
-        W = int(self.input_size[0] * self.x_simcc_split_ratio)
-        H = int(self.input_size[1] * self.y_simcc_split_ratio)
+        W = int(self.input_size[0] * self.simcc_split_ratio)
+        H = int(self.input_size[1] * self.simcc_split_ratio)
 
         self.mlp_head_x = nn.Linear(flatten_dims, W)
-        # self.mlp_head_x = MLPBlock(
-        #     17,
-        #     4,
-        #     2,
-        #     0.1,
-        #     0,
-        #     'RELU',
-        #     'BN',
-        #     'split_cat',
-        #     'x'
-        # )
+        # self.mlp_head_x = nn.Sequential(
+        #     ScaleNorm(flatten_dims),
+        #     nn.Linear(flatten_dims, W, bias=False))
+
         self.mlp_head_y = nn.Linear(flatten_dims, H)
-        # self.mlp_head_y = MLPBlock(
-        #     17,
-        #     4,
-        #     2,
-        #     0.1,
-        #     0,
-        #     'RELU',
-        #     'BN',
-        #     'split_cat',
-        #     'y'
-        # )
+        # self.mlp_head_y = nn.Sequential(
+        #     ScaleNorm(flatten_dims),
+        #     nn.Linear(flatten_dims, H, bias=False))
+
 
     def _make_deconv_head(
         self,
@@ -234,26 +219,18 @@ class SimCCHead(BaseHead):
             pred_x (Tensor): 1d representation of x.
             pred_y (Tensor): 1d representation of y.
         """
-
         if self.deconv_head is None:
             feats = feats[-1]
-            # print("feats size:")
-            # print(feats.size())
             if self.final_layer is not None:
                 feats = self.final_layer(feats)
-                # print("after final:")
-                # print(feats.size())
         else:
             feats = self.deconv_head(feats)
-        # feats = feats[-1]
+
         # flatten the output heatmap
-        x = torch.flatten(feats,2)
+        x = torch.flatten(feats, 2)
 
         pred_x = self.mlp_head_x(x)
-        # print('after mlpx')
-        # print(pred_x.shape)
         pred_y = self.mlp_head_y(x)
-
 
         return pred_x, pred_y
 
@@ -321,6 +298,9 @@ class SimCCHead(BaseHead):
             sigma = self.decoder.sigma
             batch_pred_x = get_simcc_normalized(batch_pred_x, sigma[0])
             batch_pred_y = get_simcc_normalized(batch_pred_y, sigma[1])
+            #rtmpose-like
+            # batch_pred_x = get_simcc_normalized(batch_pred_x)
+            # batch_pred_y = get_simcc_normalized(batch_pred_y)
 
             B, K, _ = batch_pred_x.shape
             # B, K, Wx -> B, K, Wx, 1
@@ -383,8 +363,7 @@ class SimCCHead(BaseHead):
         _, avg_acc, _ = simcc_pck_accuracy(
             output=to_numpy(pred_simcc),
             target=to_numpy(gt_simcc),
-            x_simcc_split_ratio=self.x_simcc_split_ratio,
-            y_simcc_split_ratio=self.y_simcc_split_ratio,
+            simcc_split_ratio=self.simcc_split_ratio,
             mask=to_numpy(keypoint_weights) > 0,
         )
 
@@ -402,5 +381,3 @@ class SimCCHead(BaseHead):
             dict(type='Normal', layer=['Linear'], std=0.01, bias=0),
         ]
         return init_cfg
-
-

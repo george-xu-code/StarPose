@@ -249,7 +249,7 @@ class PatchEmbed(BaseModule):
         padding = to_2tuple(padding)
 
         if in_channels == 3:
-            if embed_dims == 16:
+            if embed_dims <= 16:
                 in_channels = embed_dims
             else:
                 in_channels = 96

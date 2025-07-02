@@ -11,14 +11,13 @@ from .motionbert_label import MotionBERTLabel
 from .msra_heatmap import MSRAHeatmap
 from .regression_label import RegressionLabel
 from .simcc_label import SimCCLabel
-from .simcc_label_before import SimCCLabelBefore
 from .spr import SPR
 from .udp_heatmap import UDPHeatmap
 from .video_pose_lifting import VideoPoseLifting
 
 __all__ = [
     'MSRAHeatmap', 'MegviiHeatmap', 'UDPHeatmap', 'RegressionLabel',
-    'SimCCLabel', 'SimCCLabelBefore','IntegralRegressionLabel', 'AssociativeEmbedding', 'SPR',
+    'SimCCLabel', 'IntegralRegressionLabel', 'AssociativeEmbedding', 'SPR',
     'DecoupledHeatmap', 'VideoPoseLifting', 'ImagePoseLifting',
     'MotionBERTLabel', 'YOLOXPoseAnnotationProcessor', 'EDPoseLabel',
     'Hand3DHeatmap'
