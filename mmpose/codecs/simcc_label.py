@@ -62,8 +62,7 @@ class SimCCLabel(BaseKeypointCodec):
                  input_size: Tuple[int, int],
                  smoothing_type: str = 'gaussian',
                  sigma: Union[float, int, Tuple[float]] = 6.0,
-                 x_simcc_split_ratio: float = 2.0,
-                 y_simcc_split_ratio: float = 2.0,
+                 simcc_split_ratio: float = 2.0,
                  label_smooth_weight: float = 0.0,
                  normalize: bool = True,
                  use_dark: bool = False) -> None:
@@ -71,8 +70,7 @@ class SimCCLabel(BaseKeypointCodec):
 
         self.input_size = input_size
         self.smoothing_type = smoothing_type
-        self.x_simcc_split_ratio = x_simcc_split_ratio
-        self.y_simcc_split_ratio = y_simcc_split_ratio
+        self.simcc_split_ratio = simcc_split_ratio
         self.label_smooth_weight = label_smooth_weight
         self.normalize = normalize
         self.use_dark = use_dark
@@ -178,10 +176,8 @@ class SimCCLabel(BaseKeypointCodec):
             keypoints[:, :, 1] = refine_simcc_dark(keypoints[:, :, 1], simcc_y,
                                                    y_blur)
 
-        keypoints_split = np.split(keypoints, 2, axis=2)
-        x_keypoints_split = keypoints_split[0] / self.x_simcc_split_ratio
-        y_keypoints_split = keypoints_split[1] / self.y_simcc_split_ratio
-        keypoints = np.concatenate((x_keypoints_split, y_keypoints_split), axis=2)
+        keypoints /= self.simcc_split_ratio
+
 
         return keypoints, scores
 
@@ -192,18 +188,12 @@ class SimCCLabel(BaseKeypointCodec):
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Mapping keypoint coordinates into SimCC space."""
 
-        keypoints_copy = keypoints.copy()
-        keypoints_split = np.split(keypoints_copy, 2, axis=2)
-        x_keypoints_split = np.around(keypoints_split[0] * self.x_simcc_split_ratio)
-        y_keypoints_split = np.around(keypoints_split[1] * self.y_simcc_split_ratio)
-        x_keypoints_split = x_keypoints_split.astype(np.int64)
-        y_keypoints_split = y_keypoints_split.astype(np.int64)
-
-        # keypoints_split = np.around(keypoints_split * self.simcc_split_ratio)
-        # keypoints_split = keypoints_split.astype(np.int64)
+        keypoints_split = keypoints.copy()
+        keypoints_split = np.around(keypoints_split * self.simcc_split_ratio)
+        keypoints_split = keypoints_split.astype(np.int64)
         keypoint_weights = keypoints_visible.copy()
 
-        return x_keypoints_split, y_keypoints_split, keypoint_weights
+        return keypoints_split, keypoint_weights
 
     def _generate_standard(
         self,
@@ -218,8 +208,8 @@ class SimCCLabel(BaseKeypointCodec):
 
         N, K, _ = keypoints.shape
         w, h = self.input_size
-        W = np.around(w * self.x_simcc_split_ratio).astype(int)
-        H = np.around(h * self.y_simcc_split_ratio).astype(int)
+        W = np.around(w * self.simcc_split_ratio).astype(int)
+        H = np.around(h * self.simcc_split_ratio).astype(int)
 
         keypoints_split, keypoint_weights = self._map_coordinates(
             keypoints, keypoints_visible)
@@ -259,10 +249,10 @@ class SimCCLabel(BaseKeypointCodec):
 
         N, K, _ = keypoints.shape
         w, h = self.input_size
-        W = np.around(w * self.x_simcc_split_ratio).astype(int)
-        H = np.around(h * self.y_simcc_split_ratio).astype(int)
+        W = np.around(w * self.simcc_split_ratio).astype(int)
+        H = np.around(h * self.simcc_split_ratio).astype(int)
 
-        x_keypoints_split,y_keypoints_split, keypoint_weights = self._map_coordinates(
+        keypoints_split, keypoint_weights = self._map_coordinates(
             keypoints, keypoints_visible)
 
         target_x = np.zeros((N, K, W), dtype=np.float32)
@@ -280,26 +270,17 @@ class SimCCLabel(BaseKeypointCodec):
             if keypoints_visible[n, k] < 0.5:
                 continue
 
-            x_mu = x_keypoints_split[n, k]
-            y_mu = y_keypoints_split[n, k]
+            mu = keypoints_split[n, k]
 
             # check that the gaussian has in-bounds part
-            x_left, x_top = x_mu - radius
-            x_right, x_bottom = x_mu + radius + 1
+            left, top = mu - radius
+            right, bottom = mu + radius + 1
 
-            y_left, y_top = y_mu - radius
-            y_right, y_bottom = y_mu + radius + 1
-
-            if x_left >= W or x_top >= H or x_right < 0 or x_bottom < 0:
+            if left >= W or top >= H or right < 0 or bottom < 0:
                 keypoint_weights[n, k] = 0
                 continue
 
-            if y_left >= W or y_top >= H or y_right < 0 or y_bottom < 0:
-                keypoint_weights[n, k] = 0
-                continue
-
-            mu_x = x_mu
-            mu_y = y_mu
+            mu_x, mu_y = mu
 
             target_x[n, k] = np.exp(-((x - mu_x)**2) / (2 * self.sigma[0]**2))
             target_y[n, k] = np.exp(-((y - mu_y)**2) / (2 * self.sigma[1]**2))
