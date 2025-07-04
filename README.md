@@ -1,46 +1,23 @@
 # StarPose
-Rethinking Lightweight and Efficient Human Pose Estimation with Star Operation Reconstruction 
+StarPose: Bridging Performance and Efficiency in Lightweight Pose Estimation via Star Reconstruction
 ## News
 2025/06/01 The paper has been accepted as a short paper at KSEM 2025
 ## Abstract
 
-Lightweight human pose estimation has long been a research hotspot 
-and challenge in the field. Most existing methods primarily rely on introducing 
-the high-resolution design pattern from HRNet and subsequently performing 
-lightweight modifications. However, the multi-resolution branches in this paradigm result in a bottleneck in terms of throughput. To address this issue, this 
-study proposes StarPose, a single-branch, upsampling-free macro architecture 
-based on HRPVT. By optimizing all micro block designs from a lightweight perspective and reconstructing the network using the advanced star operation design 
-insight, the proposed method can handle high-dimensional features while computing in a low-dimensional space, akin to the mechanism of kernel functions, 
-thereby achieving more effective semantic feature representation. The proposed 
-method achieves 2× faster inference speed than Lite-HRNet under nearly the 
-same model complexity on the MS COCO and MPII benchmarks, while maintaining superior accuracy. This significant improvement unlocks greater potential 
-for deployment on resource-constrained edge devices. 
+Lightweight methods for human pose estimation continue to pose a significant research challenge. While many existing methods adopt the high-resolution design pattern of HRNet and subsequently apply lightweight modifications, the multi-resolution branching paradigm inherently limits model throughput. To overcome this limitation, we propose StarPose, a novel single-branch, upsampling-free hierarchical Vision Transformer architecture. Building upon the HRPVT framework, StarPose introduces optimized micro-block designs for enhanced efficiency and reconstructs the network utilizing an advanced star operation. This innovative design enables StarPose to process high-dimensional feature representations within a low-dimensional computational space, thereby facilitating more effective semantic encoding and surpassing the performance limitations of HRPVT. To further alleviate the redundancy caused by the homogeneous stacking of self-attention layers in StarPose, this paper also introduces a redundancy-reduced joint regional-global encoding stage, which improves computational efficiency while enhancing overall performance. Under nearly the same model complexity, the proposed method achieves faster inference speed than Lite-HRNet across various platforms, while maintaining superior accuracy on both the MS COCO, CrowdPose and MPII benchmarks. These advancements significantly enhance the feasibility of deployment on resource-constrained edge devices.
 
-<img src="/resources/starpose.jpg"/>
+<img src="./resources/overall.jpg"/>
 
 ## Results and models
 
-### Results on COCO val2017 with detector having human AP of 56.4 on COCO val2017 dataset
+The pre-trained model weights are available at the provided link [GoogleDrive](https://drive.google.com/drive/folders/1htanycLFR_9U-eiZTKsvN58UC9LIrPxR?usp=sharing)
 
-| Arch  | Input Size | #Params | GFLOPs | AP | AP<sup>50</sup> | AP<sup>75</sup> | AP<sup>M</sup> | AP<sup>L</sup> | AR | ckpt |
-| :----------------- | :-----------: | :------: | :-----------: | :------: | :------: | :------:| :------: | :------: | :------: | :------: |
-| [StarPose-16](/configs/body_2d_keypoint/simcc/coco/starpose-16_1e-3_260e_256x192_simcc2.py)  | 256x192 | 1.3M | 0.26 |0.672 | 0.876 | 0.746 | 0.646 | 0.725 | 0.729 | [GoogleDrive](https://drive.google.com/file/d/1XrqYIqup82F7QrqxCKnHc3VmA1-J17B9/view?usp=sharing) |
-| [StarPose-16](/configs/body_2d_keypoint/simcc/coco/starpose-16_1e-3_100e_384x288_simcc2.py)  | 384x288 | 1.4M | 0.59 | 0.704 | 0.883 | 0.774 | 0.675 | 0.762 | 0.756 | [GoogleDrive](https://drive.google.com/file/d/1ilalZl7yoo_UaUXXhB1gLO6KXmF18U6Y/view?usp=sharing) |
-| [StarPose-18](/configs/body_2d_keypoint/simcc/coco/starpose-18_1e-3_260e_256x192_simcc2.py)  | 256x192 | 1.9M | 0.45 | 0.700 | 0.885 | 0.775 | 0.672 | 0.756 | 0.756 | [GoogleDrive](https://drive.google.com/file/d/1qiJ-cF50wUHYCg-VTnrmAOua8D7bNMQr/view?usp=sharing) |
-| [StarPose-18](/configs/body_2d_keypoint/simcc/coco/starpose-18_1e-3_100e_384x288_simcc2.py)  | 384x288 | 2.0M | 1.0 | 0.729 | 0.892 | 0.798 | 0.696 | 0.791 | 0.780 | [GoogleDrive](https://drive.google.com/file/d/169QRBW-tqHbwMZZ2jlh5uFJ-do6UEbqO/view?usp=sharing) |
-
-### Results on MPII val set
-
-| Arch  | Input Size | #Params | GFLOPs | PCKh@0.5 | ckpt |
-| :--- | :--------: | :------: | :--------: | :------: | :------: |
-| [StarPose-16](/configs/body_2d_keypoint/simcc/mpii/starpose-16_2e-3_300e_mpii_256x256_simcc2.py) | 256x256 | 1.3M | 0.4 | 0.873 | [GoogleDrive](https://drive.google.com/file/d/1h5_D9nX4Pk4uOdvXtJA2lDi5rTE1sPSm/view?usp=sharing) |
-| [StarPose-18](/configs/body_2d_keypoint/simcc/mpii/starpose-18_2e-3_300e_mpii_256x256_simcc2.py) | 256x256 | 1.9M | 0.6 | 0.878 | [GoogleDrive](https://drive.google.com/file/d/1Q0BZJnFR23LyurASwkC5aGwKa2_bWwuJ/view?usp=sharing) |
 ## Prepare datasets
 
 It is recommended to Symlink the dataset root to `$StarPose/data`.
 If your folder structure is different, you may need to change the corresponding paths in config files.
 
-**For COCO data**, please download from [COCO download](http://cocodataset.org/#download), 2017 Train/Val is needed for COCO keypoints training and validation. [HRNet-Human-Pose-Estimation](https://github.com/HRNet/HRNet-Human-Pose-Estimation) provides person detection result of COCO val2017 to reproduce our multi-person pose estimation results. Please download from [OneDrive](https://1drv.ms/f/s!AhIXJn_J-blWzzDXoz5BeFl8sWM-)
+**For COCO dataset**, please download from [COCO download](http://cocodataset.org/#download), 2017 Train/Val is needed for COCO keypoints training and validation. [HRNet-Human-Pose-Estimation](https://github.com/HRNet/HRNet-Human-Pose-Estimation) provides person detection result of COCO val2017 to reproduce our multi-person pose estimation results. Please download from [OneDrive](https://1drv.ms/f/s!AhIXJn_J-blWzzDXoz5BeFl8sWM-)
 Download and extract them under `$StarPose/data`, and make them look like this:
 
 ```
@@ -67,7 +44,7 @@ StarPose
 
 ```
 
-**For MPII data**, please download from [MPII Human Pose Dataset](http://human-pose.mpi-inf.mpg.de/).
+**For MPII dataset**, please download from [MPII Human Pose Dataset](http://human-pose.mpi-inf.mpg.de/).
 We have converted the original annotation files into json format, please download them from [mpii_annotations](https://openmmlab.oss-cn-hangzhou.aliyuncs.com/mmpose/datasets/mpii_annotations.tar).
 Extract them under `$StarPose/data`, and make them look like this:
 
@@ -89,6 +66,31 @@ StarPose
 
 ```
 
+**For CrowdPose dataset**, please download from [CrowdPose](https://github.com/Jeff-sjtu/CrowdPose).
+Please download the annotation files and human detection results from [crowdpose_annotations](https://download.openmmlab.com/mmpose/datasets/crowdpose_annotations.tar).
+For top-down approaches, we follow [CrowdPose](https://arxiv.org/abs/1812.00324) to use the [pre-trained weights](https://pjreddie.com/media/files/yolov3.weights) of [YOLOv3](https://github.com/eriklindernoren/PyTorch-YOLOv3) to generate the detected human bounding boxes.
+For model training, we follow [HigherHRNet](https://github.com/HRNet/HigherHRNet-Human-Pose-Estimation) to train models on CrowdPose train/val dataset, and evaluate models on CrowdPose test dataset.
+Download and extract them under $StarPose/data, and make them look like this:
+
+```text
+$StarPose
+├── configs
+├── tools
+`── data
+    │── crowdpose
+        │-- annotations
+        │   │-- mmpose_crowdpose_train.json
+        │   │-- mmpose_crowdpose_val.json
+        │   │-- mmpose_crowdpose_trainval.json
+        │   │-- mmpose_crowdpose_test.json
+        │   │-- det_for_crowd_test_0.1_0.5.json
+        │-- images
+            │-- 100000.jpg
+            │-- 100001.jpg
+            │-- 100002.jpg
+            │-- ...
+
+```
 
 # Acknowledgement:
 This project is developed based on the [MMPOSE](https://github.com/open-mmlab/mmpose). Please follow the official documentation for environment setup.
